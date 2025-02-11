@@ -1,0 +1,5 @@
+{
+    "server_url": "http://127.0.0.1:5000/api/netstat",
+    "interval": 10,
+    "log_file": "netstat_agent.log"
+}
