@@ -17,6 +17,7 @@ import (
     "strings"
     "sync"
     "time"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type Config struct {
@@ -32,6 +33,7 @@ var (
     cache      = make(map[string]Connection)
     cacheMutex sync.RWMutex
     localIP    string
+	Version    = "dev"
 )
 
 type Connection struct {
@@ -216,11 +218,14 @@ func getProcessName(pid string) string {
 
 func getEstablishedConnections() ([]Connection, error) {
     var cmd *exec.Cmd
-    if runtime.GOOS == "windows" {
-        cmd = exec.Command("netstat", "-ano")
-    } else {
-        cmd = exec.Command("netstat", "-tunap")
-    }
+    switch os := runtime.GOOS; os {
+	case "darwin":
+		cmd = exec.Command("netstat")
+	case "windows":
+		cmd = exec.Command("netstat", "-ano")
+	default:
+		cmd = exec.Command("netstat", "-tunap")
+	}
 
     output, err := cmd.Output()
     if err != nil {
@@ -392,15 +397,40 @@ func sendReport(connections []Connection) {
 
 func main() {
     var configFile string
-    flag.StringVar(&configFile, "config", "config.json", "Configuration file")
+    flag.StringVar(&configFile, "config.file", "config.json", "Configuration file")
     flag.StringVar(&config.ServerURL, "server", "", "Server URL")
-    flag.StringVar(&config.LogFile, "logfile", "", "The logs file")
+    flag.StringVar(&config.LogFile, "log.file", "", "The logs file")
     flag.IntVar(&config.Interval, "interval", 10, "Collection interval (seconds)")
     flag.IntVar(&config.HTTPTimeout, "timeout", 5, "HTTP timeout (seconds)")
+
+    logMaxSize := flag.Int("log.max-size", 1, "log max size")
+    logMaxBackups := flag.Int("log.max-backups", 3, "log max backups")
+    logMaxAge := flag.Int("log.max-age", 10, "log max age")
+    logCompress := flag.Bool("log.compress", true, "log compress")
+	version := flag.Bool("version", false, "show cdagent version")
+
     flag.Parse()
 
+	// Show version
+    if *version {
+        fmt.Printf("%v\n", Version)
+        return
+    }
+
+	// Logging settings
+	if config.LogFile != "" {
+		log.SetOutput(&lumberjack.Logger{
+			Filename:   config.LogFile,
+			MaxSize:    *logMaxSize,    // megabytes after which new file is created
+			MaxBackups: *logMaxBackups, // number of backups
+			MaxAge:     *logMaxAge,     // days
+			Compress:   *logCompress,   // using gzip
+		})
+	}
+
     loadConfig(configFile)
-    initLogger(config.LogFile)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+    //initLogger(config.LogFile)
 
     localIP = getLocalIP()
     log.Println("The local IP is defined:", localIP)

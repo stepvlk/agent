@@ -101,7 +101,7 @@ func main() {
 	}
 	defer closeDB()
 
-	router.HandleFunc("/api/netstat", receiveConnections).Methods("POST")
+	router.HandleFunc("/api/v1/netstat", receiveConnections).Methods("POST")
 
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
