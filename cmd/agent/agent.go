@@ -12,6 +12,9 @@ import (
     "net/http"
     "os"
     "os/exec"
+	"os/signal"
+	"context"
+	"syscall"
     "runtime"
     "strconv"
     "strings"
@@ -204,11 +207,14 @@ func generateConnectionID(localIP, localPort, remoteIP, remotePort string) strin
 }
 
 func getProcessName(pid string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+    defer cancel() // The cancel should be deferred so resources are cleaned up
+
     if runtime.GOOS != "linux" {
         return "process_permit"
     }
 
-    cmd := exec.Command("ps", "-p", pid, "-o", "comm=")
+    cmd := exec.CommandContext(ctx, "ps", "-p", pid, "-o", "comm=")
     output, err := cmd.Output()
     if err != nil {
         return "process_permit"
@@ -217,14 +223,17 @@ func getProcessName(pid string) string {
 }
 
 func getEstablishedConnections() ([]Connection, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+    defer cancel() // The cancel should be deferred so resources are cleaned up
+
     var cmd *exec.Cmd
     switch os := runtime.GOOS; os {
 	case "darwin":
-		cmd = exec.Command("netstat")
+		cmd = exec.CommandContext(ctx, "netstat")
 	case "windows":
-		cmd = exec.Command("netstat", "-ano")
+		cmd = exec.CommandContext(ctx, "netstat", "-ano")
 	default:
-		cmd = exec.Command("netstat", "-tunap")
+		cmd = exec.CommandContext(ctx, "netstat", "-tunap")
 	}
 
     output, err := cmd.Output()
@@ -407,7 +416,9 @@ func main() {
     logMaxBackups := flag.Int("log.max-backups", 3, "log max backups")
     logMaxAge := flag.Int("log.max-age", 10, "log max age")
     logCompress := flag.Bool("log.compress", true, "log compress")
+
 	version := flag.Bool("version", false, "show cdagent version")
+	plugin := flag.String("plugin", "", "plugin")
 
     flag.Parse()
 
@@ -448,6 +459,47 @@ func main() {
         cacheMutex.Unlock()
     }
 
+	run := true
+
+    // Program signal processing
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+    go func(){
+        for {
+            s := <-c
+            switch s {
+                case syscall.SIGHUP:
+                    run = true
+                case syscall.SIGINT:
+                    log.Print("[info] cdagent stopped")
+                    os.Exit(0)
+                case syscall.SIGTERM:
+                    log.Print("[info] cdagent stopped")
+                    os.Exit(0)
+                default:
+                    log.Print("[info] unknown signal received")
+            }
+        }
+    }()
+
+    // Daemon mode
+    for (run) {
+		if *plugin == "telegraf" {
+            run = false
+        }
+
+        connections, err := getEstablishedConnections()
+        if err != nil {
+            log.Println("Connection receipt error:", err)
+            continue
+        }
+
+        updateCache(connections)
+
+		time.Sleep(time.Duration(config.Interval) * time.Second)
+	}
+
+	/*
     ticker := time.NewTicker(time.Duration(config.Interval) * time.Second)
     defer ticker.Stop()
 
@@ -460,4 +512,5 @@ func main() {
 
         updateCache(connections)
     }
+	*/
 }  
