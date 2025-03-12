@@ -44,7 +44,7 @@ func connectDB() error {
 		return err
 	}
 
-	// Проверка подключения
+	// Check the connection
 	err = client.Ping(context.TODO(), nil)
 	if err != nil {
 		log.Fatal("Couldn't connect to MongoDB:", err)
@@ -60,7 +60,7 @@ func closeDB() {
 	if err := client.Disconnect(context.TODO()); err != nil {
 		log.Fatal("Error closing connection to MongoDB:", err)
 	}
-	log.Println("Подключение к MongoDB закрыто")
+	log.Println("Connection to MongoDB closed")
 }
 
 func receiveConnections(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +80,7 @@ func receiveConnections(w http.ResponseWriter, r *http.Request) {
 	for _, conn := range report.Connections {
 		_, err := collection.InsertOne(context.TODO(), conn)
 		if err != nil {
-			log.Printf("Data decoding error MongoDB write error: %v", err)
+			log.Printf("MongoDB write error: %v", err)
 			http.Error(w, fmt.Sprintf("Error writing to MongoDB: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -108,6 +108,6 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("Сервер запущен на порту %s", port)
+	log.Printf("Server started on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, router))
 }
