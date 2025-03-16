@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -44,7 +46,6 @@ func connectDB() error {
 		return err
 	}
 
-	// Check the connection
 	err = client.Ping(context.TODO(), nil)
 	if err != nil {
 		log.Fatal("Couldn't connect to MongoDB:", err)
@@ -70,15 +71,39 @@ func receiveConnections(w http.ResponseWriter, r *http.Request) {
 		Connections []Connection `json:"connections"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&report)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("Error reading request body: %v", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+	log.Printf("Received request body: %s", string(body))
+
+	err = json.Unmarshal(body, &report)
 	if err != nil {
 		log.Printf("Data decoding error: %v", err)
 		http.Error(w, "Data decoding error", http.StatusBadRequest)
 		return
 	}
 
+	log.Printf("Received report: Hostname=%s, Timestamp=%s, Connections=%d", report.Hostname, report.Timestamp, len(report.Connections))
+
 	for _, conn := range report.Connections {
-		_, err := collection.InsertOne(context.TODO(), conn)
+		log.Printf("Connection: %+v", conn)
+
+		filter := bson.M{"id": conn.ID}
+		var existingConn Connection
+		err := collection.FindOne(context.TODO(), filter).Decode(&existingConn)
+		if err == nil {
+			log.Printf("Connection %s already exists in the database, skipping", conn.ID)
+			continue
+		} else if err != mongo.ErrNoDocuments {
+			log.Printf("Error checking for duplicate connection: %v", err)
+			http.Error(w, fmt.Sprintf("Error checking for duplicate connection: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		_, err = collection.InsertOne(context.TODO(), conn)
 		if err != nil {
 			log.Printf("MongoDB write error: %v", err)
 			http.Error(w, fmt.Sprintf("Error writing to MongoDB: %v", err), http.StatusInternalServerError)
@@ -101,7 +126,7 @@ func main() {
 	}
 	defer closeDB()
 
-	router.HandleFunc("/api/v1/netmon/netstat", receiveConnections).Methods("POST")
+	router.HandleFunc("/api/v1/netstat", receiveConnections).Methods("POST")
 
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
